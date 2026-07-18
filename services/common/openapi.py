@@ -2,6 +2,9 @@ from typing import Any
 
 API_VERSION = "1.0.0"
 
+# Swagger / ReDoc / OpenAPI schema — без API key (сами эндпоинты API ключ всё равно требуют).
+DOCS_PUBLIC_PATHS = frozenset({"/docs", "/redoc", "/openapi.json"})
+
 
 def swagger_kwargs(
     *,

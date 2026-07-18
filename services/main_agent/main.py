@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
 from services.common.api_auth import apply_openapi_api_key, install_api_key_middleware
-from services.common.openapi import swagger_kwargs
+from services.common.openapi import DOCS_PUBLIC_PATHS, swagger_kwargs
 from services.main_agent.agent import AgentError, stream_agent
 from services.main_agent.chat_store import chat_store
 from services.main_agent.config import API_KEY, APP_TITLE, HOST, PORT
@@ -30,26 +30,70 @@ SSE_EVENT_TYPES = [
     "done",
 ]
 
+API_DESCRIPTION = """
+## Что это
+
+HTTP-API SQL-агента: принимает текстовый вопрос, ходит в PostgreSQL (read-only), при необходимости
+запускает Python в песочнице и отдаёт ответ **потоком SSE** (`text/event-stream`).
+
+## Авторизация
+
+Все рабочие эндпоинты (кроме `/health` и этой документации) требуют ключ:
+
+- заголовок **`X-API-Key: <ваш ключ>`**, или
+- **`Authorization: Bearer <ваш ключ>`**
+
+В Swagger нажми **Authorize** и вставь ключ — тогда можно дернуть `/chat` из браузера.
+
+## Как пользоваться `/chat`
+
+1. `POST /chat` с телом `{"message": "..."}`.
+2. Читай SSE: каждая строка `event: <тип>` + `data: <json>`.
+3. Сохрани `chat_id` из первого события `chat` — передай его в следующих запросах для контекста.
+
+## Основные SSE-события
+
+| event | Зачем |
+|-------|--------|
+| `chat` | ID чата, новый или продолжение |
+| `metadata` | Схема БД, которую агент подставил в промпт |
+| `reasoning_delta` / `content_delta` | Стрим мыслей и текста ответа |
+| `tool_start` / `tool_result` | Вызов tool (SQL, sandbox, chart) и результат |
+| `assistant_message` | Финальный текст ассистента за итерацию |
+| `error` | Ошибка (LLM, SQL, sandbox…) |
+| `done` | Конец turn: счётчики итераций и SQL |
+
+Chart-tools возвращают JSON с `result.kind = "chart"` — график рисует **клиент**, не сервер.
+
+## Лимиты
+
+Размер ответа SQL, число итераций агента, chart points и т.д. задаются переменными окружения сервиса
+(`MAX_QUERY_RESULT_CHARS`, `MAX_AGENT_ITERATIONS`, …).
+"""
+
 app = FastAPI(
     **swagger_kwargs(
-        title=APP_TITLE,
-        description=(
-            "SQL-агент с LLM: SSE-стрим `/chat`, tool calls (SQL, sandbox, charts), "
-            "multi-turn через chat_id."
-        ),
+        title="DeepSQL Agent API",
+        description=API_DESCRIPTION,
         tags=[
-            {"name": "health", "description": "Проверка состояния сервиса"},
-            {"name": "agent", "description": "Диалог с агентом"},
+            {"name": "health", "description": "Жив ли процесс. Ключ не нужен."},
+            {"name": "agent", "description": "Диалог с агентом. Ответ — SSE-поток, нужен API key."},
         ],
     )
 )
 
-install_api_key_middleware(app, API_KEY)
+install_api_key_middleware(app, API_KEY, public_paths=frozenset({"/health"}) | DOCS_PUBLIC_PATHS)
 if API_KEY:
     apply_openapi_api_key(app)
 
 
-@app.get("/health", response_model=HealthResponse, tags=["health"], summary="Health check")
+@app.get(
+    "/health",
+    response_model=HealthResponse,
+    tags=["health"],
+    summary="Проверка, что сервис запущен",
+    description="Используй для healthcheck и мониторинга. **API key не нужен.**",
+)
 def health() -> HealthResponse:
     return HealthResponse(status="ok", service=APP_TITLE)
 
@@ -57,31 +101,40 @@ def health() -> HealthResponse:
 @app.post(
     "/chat",
     tags=["agent"],
-    summary="Диалог с агентом (SSE)",
+    summary="Отправить сообщение агенту",
     description=(
-        "Возвращает поток Server-Sent Events (`text/event-stream`). "
-        "Каждое событие — JSON в поле `data`, тип в `event`. "
-        f"Типы событий: {', '.join(SSE_EVENT_TYPES)}. "
-        "Chart JSON приходит в `tool_result` с `result.kind=chart`."
+        "Главный эндпоинт. **Нужен API key.**\n\n"
+        "Ответ — не JSON, а **SSE-поток** (`Content-Type: text/event-stream`). "
+        "Парси построчно: `event:` — имя события, `data:` — JSON с полем `type`.\n\n"
+        f"Полный список типов: `{', '.join(SSE_EVENT_TYPES)}`.\n\n"
+        "**Multi-turn:** передай `chat_id` из первого ответа — история хранится в памяти процесса "
+        "(пропадёт при рестарте контейнера).\n\n"
+        "**Charts:** в `tool_result` смотри `result.kind == \"chart\"` и `chart_type` "
+        "(gauge, pie, bar, line, scatter) — `spec` отдаётся клиенту для отрисовки.\n\n"
+        "**curl:** `curl -N -H 'X-API-Key: ...' -H 'Content-Type: application/json' "
+        "-d '{\"message\":\"...\"}' https://host/chat`"
     ),
     responses={
         200: {
-            "description": "SSE-поток событий агента",
+            "description": "SSE-поток: события агента до `done` или `error`",
             "content": {
                 "text/event-stream": {
                     "schema": {"type": "string"},
                     "example": (
                         'event: chat\n'
-                        'data: {"type":"chat","chat_id":"...","is_new":true}\n\n'
-                        'event: tool_result\n'
-                        'data: {"type":"tool_result","name":"render_pie_chart","success":true,'
-                        '"result":{"ok":true,"kind":"chart","chart_type":"pie","spec":{...}}}\n\n'
+                        'data: {"type":"chat","chat_id":"054256de-...","is_new":true,"history_messages_count":0}\n\n'
+                        'event: content_delta\n'
+                        'data: {"type":"content_delta","content":"4","iteration":1,"chat_id":"054256de-..."}\n\n'
+                        'event: assistant_message\n'
+                        'data: {"type":"assistant_message","content":"4","iteration":1,"chat_id":"054256de-..."}\n\n'
                         'event: done\n'
-                        'data: {"type":"done","iterations":3,"sql_calls_count":1}\n\n'
+                        'data: {"type":"done","iterations":1,"sql_calls_count":0,"tool_calls_count":0,"chat_id":"054256de-..."}\n\n'
                     ),
                 }
             },
-        }
+        },
+        401: {"description": "Нет или неверный `X-API-Key` / Bearer token"},
+        503: {"description": "На сервере не задан `API_KEY`"},
     },
 )
 def chat(request: ChatRequest) -> StreamingResponse:
