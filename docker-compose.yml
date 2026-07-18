@@ -1,0 +1,125 @@
+name: ai_engine
+
+services:
+  db_orch:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: db_orch
+    env_file:
+      - .env
+    environment:
+      DB_ORCH_HOST: 0.0.0.0
+      DB_ORCH_PORT: 8001
+      MAX_QUERY_RESULT_CHARS: ${MAX_QUERY_RESULT_CHARS:-5000}
+      MAX_EXPORT_RESULT_CHARS: ${MAX_EXPORT_RESULT_CHARS:-5242880}
+      DB_READONLY: ${DB_READONLY:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${DB_ORCH_PORT:-8001}:8001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ai_engine
+    restart: unless-stopped
+
+  sandbox:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: sandbox
+    env_file:
+      - .env
+    environment:
+      SANDBOX_HOST: 0.0.0.0
+      SANDBOX_PORT: 8003
+      DB_ORCH_URL: http://db_orch:8001
+      DB_ORCH_EXPORT_TIMEOUT_SEC: ${DB_ORCH_EXPORT_TIMEOUT_SEC:-120}
+      SANDBOX_MAX_FILES: ${SANDBOX_MAX_FILES:-5}
+      SANDBOX_MAX_FILE_BYTES: ${SANDBOX_MAX_FILE_BYTES:-5242880}
+      SANDBOX_EXEC_TIMEOUT_SEC: ${SANDBOX_EXEC_TIMEOUT_SEC:-30}
+    volumes:
+      - ./sandboxes:/app/sandboxes
+    depends_on:
+      db_orch:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ai_engine
+    restart: unless-stopped
+
+  main_agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: main_agent
+    env_file:
+      - .env
+    environment:
+      MAIN_AGENT_HOST: 0.0.0.0
+      MAIN_AGENT_PORT: 8002
+      DB_ORCH_URL: http://db_orch:8001
+      SANDBOX_URL: http://sandbox:8003
+      DB_ORCH_TIMEOUT_SEC: ${DB_ORCH_TIMEOUT_SEC:-30}
+      SANDBOX_TIMEOUT_SEC: ${SANDBOX_TIMEOUT_SEC:-120}
+      MAX_PARALLEL_QUERIES: ${MAX_PARALLEL_QUERIES:-5}
+      MAX_AGENT_ITERATIONS: ${MAX_AGENT_ITERATIONS:-15}
+      MAX_QUERY_RESULT_CHARS: ${MAX_QUERY_RESULT_CHARS:-5000}
+      MAX_EXPORT_RESULT_CHARS: ${MAX_EXPORT_RESULT_CHARS:-5242880}
+      SANDBOX_MAX_FILES: ${SANDBOX_MAX_FILES:-5}
+      SANDBOX_MAX_FILE_BYTES: ${SANDBOX_MAX_FILE_BYTES:-5242880}
+      SANDBOX_EXEC_TIMEOUT_SEC: ${SANDBOX_EXEC_TIMEOUT_SEC:-30}
+      MAX_CHART_POINTS: ${MAX_CHART_POINTS:-1000}
+      MAX_CHART_SERIES: ${MAX_CHART_SERIES:-20}
+      MAX_PIE_SLICES: ${MAX_PIE_SLICES:-50}
+      LLM_TIMEOUT_SEC: ${LLM_TIMEOUT_SEC:-120}
+    ports:
+      - "${MAIN_AGENT_PORT:-8002}:8002"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      db_orch:
+        condition: service_healthy
+      sandbox:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ai_engine
+    restart: unless-stopped
+
+networks:
+  ai_engine:
+    driver: bridge
