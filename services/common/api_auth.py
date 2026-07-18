@@ -55,10 +55,14 @@ def api_key_headers(api_key: str) -> dict[str, str]:
     return {"X-API-Key": api_key}
 
 
-def install_api_key_middleware(app: FastAPI, api_key: str) -> None:
+def install_api_key_middleware(
+    app: FastAPI,
+    api_key: str,
+    public_paths: frozenset[str] | None = None,
+) -> None:
     if not api_key:
         return
-    app.add_middleware(ApiKeyMiddleware, api_key=api_key)
+    app.add_middleware(ApiKeyMiddleware, api_key=api_key, public_paths=public_paths)
 
 
 def apply_openapi_api_key(app) -> None:
