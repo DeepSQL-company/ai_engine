@@ -2,7 +2,8 @@ from typing import Any
 
 import httpx
 
-from services.sandbox.config import DB_ORCH_EXPORT_TIMEOUT_SEC, DB_ORCH_URL
+from services.common.api_auth import api_key_headers
+from services.sandbox.config import API_KEY, DB_ORCH_EXPORT_TIMEOUT_SEC, DB_ORCH_URL
 
 
 class DbOrchError(Exception):
@@ -23,7 +24,7 @@ def execute_sql_export(sql: str, params: dict | list | None = None) -> dict[str,
         payload["params"] = params
 
     try:
-        with httpx.Client(timeout=DB_ORCH_EXPORT_TIMEOUT_SEC) as client:
+        with httpx.Client(timeout=DB_ORCH_EXPORT_TIMEOUT_SEC, headers=api_key_headers(API_KEY)) as client:
             response = client.post(url, json=payload)
             response.raise_for_status()
             return response.json()

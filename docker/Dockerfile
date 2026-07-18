@@ -35,12 +35,18 @@ RUN pip install -r requirements/sandbox.txt
 
 FROM deps-db_orch AS db_orch
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY services/__init__.py services/__init__.py
 COPY services/common/ services/common/
 COPY services/db_orch/ services/db_orch/
+COPY docker/db_orch_entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8001
-CMD ["python", "-m", "services.db_orch.main"]
+ENTRYPOINT ["/entrypoint.sh"]
 
 
 FROM deps-main_agent AS main_agent

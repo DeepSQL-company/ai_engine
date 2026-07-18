@@ -9,6 +9,7 @@ load_dotenv()
 HOST = env_str("MAIN_AGENT_HOST", "0.0.0.0")
 PORT = env_int("MAIN_AGENT_PORT", 8002)
 APP_TITLE = "main_agent"
+API_KEY = env_str("API_KEY", "")
 
 # Downstream services
 DB_ORCH_URL = env_str("DB_ORCH_URL", "http://localhost:8001")

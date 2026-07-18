@@ -13,6 +13,7 @@ from services.db_orch.query_guard import (
     build_limited_result,
     format_sql_error,
     format_validation_error,
+    validate_query_params,
     validate_readonly_sql,
 )
 
@@ -193,6 +194,7 @@ class DbManager:
         from services.db_orch.config import MAX_QUERY_RESULT_CHARS
 
         validate_readonly_sql(sql)
+        validate_query_params(params, sql)
         limit = max_result_chars if max_result_chars is not None else MAX_QUERY_RESULT_CHARS
 
         try:

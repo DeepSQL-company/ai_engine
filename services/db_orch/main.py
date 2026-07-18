@@ -3,9 +3,11 @@ import logging
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 
+from services.common.api_auth import apply_openapi_api_key, install_api_key_middleware
 from services.common.openapi import swagger_kwargs
-from services.db_orch.config import APP_TITLE, HOST, MAX_EXPORT_RESULT_CHARS, PORT
+from services.db_orch.config import API_KEY, APP_TITLE, HOST, MAX_EXPORT_RESULT_CHARS, PORT
 from services.db_orch.db_manager import DbManager, DbNotInitializedError, DbQueryError, db_manager
+from services.db_orch.input_guard import InputValidationError, validate_database_name, validate_pg_identifier
 from services.db_orch.models import (
     ColumnsResponse,
     DatabasesResponse,
@@ -36,6 +38,40 @@ app = FastAPI(
         ],
     )
 )
+
+install_api_key_middleware(app, API_KEY)
+if API_KEY:
+    apply_openapi_api_key(app)
+
+
+def _validation_http_error(error: InputValidationError) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"ok": False, "error_type": "validation_error", "message": error.message},
+    )
+
+
+def _parse_database(database: str | None) -> str | None:
+    if database is None:
+        return None
+    try:
+        return validate_database_name(database)
+    except InputValidationError as error:
+        raise _validation_http_error(error) from error
+
+
+def _parse_schema(schema: str) -> str:
+    try:
+        return validate_pg_identifier(schema, "schema")
+    except InputValidationError as error:
+        raise _validation_http_error(error) from error
+
+
+def _parse_table(table: str) -> str:
+    try:
+        return validate_pg_identifier(table, "table")
+    except InputValidationError as error:
+        raise _validation_http_error(error) from error
 
 
 def _not_initialized_error() -> HTTPException:
@@ -100,8 +136,9 @@ def get_databases() -> DatabasesResponse:
 def get_schemas(
     database: str | None = Query(default=None, description="Имя БД. По умолчанию — из init"),
 ) -> SchemasResponse:
+    resolved_database = _parse_database(database)
     try:
-        schemas = manager.list_schemas(database)
+        schemas = manager.list_schemas(resolved_database)
     except DbNotInitializedError:
         raise _not_initialized_error()
     except Exception as error:
@@ -120,8 +157,10 @@ def get_tables(
     schema: str = Query(..., description="Имя схемы"),
     database: str | None = Query(default=None, description="Имя БД. По умолчанию — из init"),
 ) -> TablesResponse:
+    resolved_schema = _parse_schema(schema)
+    resolved_database = _parse_database(database)
     try:
-        tables = manager.list_tables(schema=schema, database=database)
+        tables = manager.list_tables(schema=resolved_schema, database=resolved_database)
     except DbNotInitializedError:
         raise _not_initialized_error()
     except Exception as error:
@@ -141,8 +180,15 @@ def get_columns(
     table: str = Query(..., description="Имя таблицы"),
     database: str | None = Query(default=None, description="Имя БД. По умолчанию — из init"),
 ) -> ColumnsResponse:
+    resolved_schema = _parse_schema(schema)
+    resolved_table = _parse_table(table)
+    resolved_database = _parse_database(database)
     try:
-        columns = manager.list_columns(schema=schema, table=table, database=database)
+        columns = manager.list_columns(
+            schema=resolved_schema,
+            table=resolved_table,
+            database=resolved_database,
+        )
     except DbNotInitializedError:
         raise _not_initialized_error()
     except Exception as error:

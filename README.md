@@ -1,5 +1,17 @@
 # API
 
+Все эндпоинты (кроме `/health`) требуют заголовок:
+
+```
+X-API-Key: <API_KEY из .env>
+```
+
+или `Authorization: Bearer <API_KEY>`.
+
+Переменная окружения: `API_KEY`.
+
+---
+
 ## main_agent — `:8002`
 
 Swagger: http://localhost:8002/docs

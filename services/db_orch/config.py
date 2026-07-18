@@ -8,6 +8,7 @@ load_dotenv()
 HOST = env_str("DB_ORCH_HOST", "0.0.0.0")
 PORT = env_int("DB_ORCH_PORT", 8001)
 APP_TITLE = "db_orch"
+API_KEY = env_str("API_KEY", "")
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "db.local.yaml"
 

@@ -2,7 +2,8 @@ from typing import Any
 
 import httpx
 
-from services.main_agent.config import DB_ORCH_TIMEOUT_SEC, DB_ORCH_URL
+from services.common.api_auth import api_key_headers
+from services.main_agent.config import API_KEY, DB_ORCH_TIMEOUT_SEC, DB_ORCH_URL
 
 
 class DbOrchError(Exception):
@@ -23,7 +24,7 @@ class DbOrchError(Exception):
 def _request(method: str, path: str, **kwargs: Any) -> Any:
     url = f"{DB_ORCH_URL.rstrip('/')}{path}"
     try:
-        with httpx.Client(timeout=DB_ORCH_TIMEOUT_SEC) as client:
+        with httpx.Client(timeout=DB_ORCH_TIMEOUT_SEC, headers=api_key_headers(API_KEY)) as client:
             response = client.request(method, url, **kwargs)
             response.raise_for_status()
             return response.json()

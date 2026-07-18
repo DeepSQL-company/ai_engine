@@ -4,10 +4,11 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
+from services.common.api_auth import apply_openapi_api_key, install_api_key_middleware
 from services.common.openapi import swagger_kwargs
 from services.main_agent.agent import AgentError, stream_agent
 from services.main_agent.chat_store import chat_store
-from services.main_agent.config import APP_TITLE, HOST, PORT
+from services.main_agent.config import API_KEY, APP_TITLE, HOST, PORT
 from services.main_agent.models import ChatRequest, HealthResponse
 from services.main_agent.sse_events import format_sse
 
@@ -42,6 +43,10 @@ app = FastAPI(
         ],
     )
 )
+
+install_api_key_middleware(app, API_KEY)
+if API_KEY:
+    apply_openapi_api_key(app)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"], summary="Health check")

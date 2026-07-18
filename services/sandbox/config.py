@@ -8,6 +8,7 @@ load_dotenv()
 HOST = env_str("SANDBOX_HOST", "0.0.0.0")
 PORT = env_int("SANDBOX_PORT", 8003)
 APP_TITLE = "sandbox"
+API_KEY = env_str("API_KEY", "")
 
 DB_ORCH_URL = env_str("DB_ORCH_URL", "http://localhost:8001")
 DB_ORCH_EXPORT_TIMEOUT_SEC = env_int("DB_ORCH_EXPORT_TIMEOUT_SEC", 120)

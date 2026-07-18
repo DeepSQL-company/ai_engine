@@ -1,4 +1,12 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from services.db_orch.input_guard import (
+    InputValidationError,
+    validate_database_name,
+    validate_host,
+    validate_pg_identifier,
+    validate_port,
+)
 
 
 class DbConnectionConfig(BaseModel):
@@ -22,6 +30,48 @@ class DbConnectionConfig(BaseModel):
             }
         },
     )
+
+    @field_validator("host")
+    @classmethod
+    def _validate_host(cls, value: str) -> str:
+        try:
+            return validate_host(value)
+        except InputValidationError as error:
+            raise ValueError(error.message) from error
+
+    @field_validator("port")
+    @classmethod
+    def _validate_port(cls, value: int) -> int:
+        try:
+            return validate_port(value)
+        except InputValidationError as error:
+            raise ValueError(error.message) from error
+
+    @field_validator("database")
+    @classmethod
+    def _validate_database(cls, value: str) -> str:
+        try:
+            return validate_database_name(value)
+        except InputValidationError as error:
+            raise ValueError(error.message) from error
+
+    @field_validator("user")
+    @classmethod
+    def _validate_user(cls, value: str) -> str:
+        try:
+            return validate_pg_identifier(value, "user")
+        except InputValidationError as error:
+            raise ValueError(error.message) from error
+
+    @field_validator("schema_name")
+    @classmethod
+    def _validate_schema(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return validate_pg_identifier(value, "schema")
+        except InputValidationError as error:
+            raise ValueError(error.message) from error
 
 
 class InitResponse(BaseModel):

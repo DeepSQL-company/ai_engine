@@ -9,6 +9,20 @@ from services.db_orch.config import MAX_QUERY_RESULT_CHARS, READONLY_QUERIES
 COMMENT_BLOCK_PATTERN = re.compile(r"/\*.*?\*/", re.DOTALL)
 FIRST_KEYWORD_PATTERN = re.compile(r"([a-z_]+)", re.IGNORECASE)
 
+DANGEROUS_SQL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bCOPY\s+.*\bFROM\b", re.IGNORECASE | re.DOTALL), "COPY FROM запрещён"),
+    (re.compile(r"\bINTO\s+(TEMP|TEMPORARY|UNLOGGED|TABLE)\b", re.IGNORECASE), "SELECT INTO запрещён"),
+    (re.compile(r"\bpg_sleep\s*\(", re.IGNORECASE), "pg_sleep запрещён"),
+    (re.compile(r"\bpg_read_file\s*\(", re.IGNORECASE), "pg_read_file запрещён"),
+    (re.compile(r"\bpg_write_file\s*\(", re.IGNORECASE), "pg_write_file запрещён"),
+    (re.compile(r"\blo_import\s*\(", re.IGNORECASE), "lo_import запрещён"),
+    (re.compile(r"\bdblink(_exec)?\s*\(", re.IGNORECASE), "dblink запрещён"),
+    (re.compile(r"\bEXECUTE\s+", re.IGNORECASE), "EXECUTE запрещён"),
+    (re.compile(r";\s*\S", re.IGNORECASE), "Несколько SQL-команд через ';' запрещены"),
+]
+
+MAX_QUERY_PARAMS_JSON_CHARS = 10_000
+
 WRITE_FIRST_KEYWORDS = frozenset(
     {
         "INSERT",
@@ -89,6 +103,49 @@ def extract_first_keyword(sql: str) -> str:
     return match.group(1).upper() if match else ""
 
 
+def validate_query_params(params: dict | list | None, sql: str) -> None:
+    if params is None:
+        return
+
+    try:
+        serialized = json.dumps(params, ensure_ascii=False, default=str)
+    except TypeError as error:
+        raise QueryValidationError("params должны быть JSON-сериализуемыми.", sql) from error
+
+    if len(serialized) > MAX_QUERY_PARAMS_JSON_CHARS:
+        raise QueryValidationError(
+            f"params слишком большие (>{MAX_QUERY_PARAMS_JSON_CHARS} символов).",
+            sql,
+        )
+
+    def _walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise QueryValidationError("Ключи params должны быть строками.", sql)
+                _walk(item)
+            return
+        if isinstance(value, list):
+            for item in value:
+                _walk(item)
+            return
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return
+        raise QueryValidationError(
+            "params могут содержать только строки, числа, bool, null, list и dict.",
+            sql,
+        )
+
+    _walk(params)
+
+
+def validate_dangerous_sql_patterns(sql: str) -> None:
+    cleaned = strip_sql_comments(sql)
+    for pattern, message in DANGEROUS_SQL_PATTERNS:
+        if pattern.search(cleaned):
+            raise QueryValidationError(message, sql)
+
+
 def validate_readonly_sql(sql: str) -> None:
     if not READONLY_QUERIES:
         return
@@ -96,6 +153,8 @@ def validate_readonly_sql(sql: str) -> None:
     normalized = sql.strip()
     if not normalized:
         raise QueryValidationError("SQL-запрос пустой.", sql)
+
+    validate_dangerous_sql_patterns(normalized)
 
     if normalized.endswith(";"):
         normalized = normalized[:-1].strip()
