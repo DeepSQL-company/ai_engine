@@ -24,8 +24,6 @@ services:
       DB_SCHEMA: ${DB_SCHEMA:-bookings}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    ports:
-      - "${DB_ORCH_PORT:-8001}:8001"
     healthcheck:
       test:
         [
