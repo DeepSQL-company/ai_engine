@@ -106,7 +106,7 @@ services:
     ports:
       - "${MAIN_AGENT_PORT:-8002}:8002"
     volumes:
-      - ./logs:/app/logs
+      - /etc/ai_engine/logs:/app/logs
     depends_on:
       db_orch:
         condition: service_healthy
