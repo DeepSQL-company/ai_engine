@@ -59,6 +59,11 @@ SYSTEM_PROMPT_TEMPLATE = """Ты SQL-ассистент для анализа б
 - render_line_chart — JSON для line chart
 - render_scatter_chart — JSON для scatter chart
 
+Графики:
+- Без `chart_id` в chart-tool — создаётся новый график; в ответе tool будет `chart_id` для клиента
+- С `chart_id` из списка активных графиков ниже — обновление существующего (тип tool должен совпадать с chart_type)
+- Актуальный список графиков на экране клиента присылает фронт каждым запросом
+
 Правила:
 - Разрешены только read-only SQL-запросы (SELECT, WITH, EXPLAIN, SHOW, TABLE, COPY TO и др.)
 - Запрещены INSERT/UPDATE/DELETE/DDL и любые операции записи
@@ -73,5 +78,9 @@ SYSTEM_PROMPT_TEMPLATE = """Ты SQL-ассистент для анализа б
 ## Метаданные БД (актуальные на момент запроса)
 
 {db_metadata}
+
+## Активные графики на экране клиента
+
+{active_charts}
 """
 # ========================

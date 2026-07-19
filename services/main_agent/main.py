@@ -154,7 +154,11 @@ def chat(request: ChatRequest) -> StreamingResponse:
         )
 
         try:
-            for event in stream_agent(session.messages, chat_id):
+            for event in stream_agent(
+                session.messages,
+                chat_id,
+                [chart.model_dump() for chart in request.active_charts],
+            ):
                 event["chat_id"] = chat_id
                 yield format_sse(event)
         except AgentError as error:

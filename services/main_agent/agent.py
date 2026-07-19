@@ -1,5 +1,6 @@
 from typing import Any, Iterator
 
+from services.main_agent.charts import format_active_charts_for_prompt
 from services.main_agent.config import (
     MAX_AGENT_ITERATIONS,
     MAX_EXPORT_RESULT_MB,
@@ -18,9 +19,16 @@ class AgentError(Exception):
     pass
 
 
-def stream_agent(conversation: list[dict[str, Any]], chat_id: str) -> Iterator[dict[str, Any]]:
+def stream_agent(
+    conversation: list[dict[str, Any]],
+    chat_id: str,
+    active_charts: list[dict[str, Any]] | None = None,
+) -> Iterator[dict[str, Any]]:
     if not conversation or conversation[-1].get("role") != "user":
         raise AgentError("conversation должна заканчиваться user-сообщением")
+
+    active_charts = active_charts or []
+    charts_by_id = {chart["chart_id"]: chart for chart in active_charts}
 
     yield {"type": "status", "stage": "metadata", "message": "Загрузка метаданных БД"}
 
@@ -37,6 +45,7 @@ def stream_agent(conversation: list[dict[str, Any]], chat_id: str) -> Iterator[d
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         db_metadata=metadata,
+        active_charts=format_active_charts_for_prompt(active_charts),
         max_query_result_chars=MAX_QUERY_RESULT_CHARS,
         max_export_result_mb=MAX_EXPORT_RESULT_MB,
         sandbox_max_files=SANDBOX_MAX_FILES,
@@ -126,7 +135,7 @@ def stream_agent(conversation: list[dict[str, Any]], chat_id: str) -> Iterator[d
                 "input": function.get("arguments"),
             }
 
-        tool_details = execute_tool_calls_detailed(tool_calls, chat_id)
+        tool_details = execute_tool_calls_detailed(tool_calls, chat_id, charts_by_id)
         tool_calls_count += len(tool_details)
         sql_calls_count += sum(1 for item in tool_details if item["name"] == "execute_sql")
 
@@ -143,6 +152,7 @@ def stream_agent(conversation: list[dict[str, Any]], chat_id: str) -> Iterator[d
                 event["sql"] = detail["sql"]
             if detail.get("success") and detail["result"].get("kind") == "chart":
                 event["chart_type"] = detail["result"].get("chart_type")
+                event["chart_id"] = detail["result"].get("chart_id")
             yield event
             messages.append(detail["message"])
             conversation.append(detail["message"])

@@ -1,4 +1,17 @@
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class ActiveChart(BaseModel):
+    chart_id: str = Field(min_length=1, description="Уникальный id графика на клиенте")
+    chart_type: str = Field(
+        description="Тип: gauge | pie | bar | line | scatter",
+        examples=["pie", "bar"],
+    )
+    title: str = Field(min_length=1)
+    description: str | None = None
+    spec: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
@@ -14,6 +27,13 @@ class ChatRequest(BaseModel):
         description=(
             "ID существующего чата для продолжения диалога. "
             "При первом запросе не передавай — возьми chat_id из SSE-события `chat` и подставь в следующие запросы."
+        ),
+    )
+    active_charts: list[ActiveChart] = Field(
+        default_factory=list,
+        description=(
+            "Графики, которые сейчас показаны на экране клиента. "
+            "Агент видит их в промпте и может обновить через chart-tool с тем же chart_id."
         ),
     )
 

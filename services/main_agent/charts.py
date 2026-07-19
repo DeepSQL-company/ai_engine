@@ -1,6 +1,15 @@
+import json
 from typing import Any
 
 from services.main_agent.config import MAX_CHART_POINTS, MAX_CHART_SERIES, MAX_PIE_SLICES
+
+CHART_TYPE_BY_TOOL = {
+    "render_gauge": "gauge",
+    "render_pie_chart": "pie",
+    "render_bar_chart": "bar",
+    "render_line_chart": "line",
+    "render_scatter_chart": "scatter",
+}
 
 
 class ChartValidationError(Exception):
@@ -9,10 +18,17 @@ class ChartValidationError(Exception):
         super().__init__(message)
 
 
-def _chart_payload(chart_type: str, title: str, spec: dict[str, Any], description: str | None = None) -> dict[str, Any]:
+def _chart_payload(
+    chart_type: str,
+    title: str,
+    spec: dict[str, Any],
+    description: str | None = None,
+    chart_id: str | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "ok": True,
         "kind": "chart",
+        "chart_id": chart_id,
         "chart_type": chart_type,
         "title": title,
         "spec": spec,
@@ -20,6 +36,28 @@ def _chart_payload(chart_type: str, title: str, spec: dict[str, Any], descriptio
     if description:
         payload["description"] = description
     return payload
+
+
+def format_active_charts_for_prompt(active_charts: list[dict[str, Any]]) -> str:
+    if not active_charts:
+        return "Нет активных графиков на экране клиента."
+
+    lines: list[str] = []
+    for chart in active_charts:
+        lines.append(
+            json.dumps(
+                {
+                    "chart_id": chart["chart_id"],
+                    "chart_type": chart["chart_type"],
+                    "title": chart["title"],
+                    "description": chart.get("description"),
+                    "spec": chart.get("spec", {}),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+    return "\n".join(lines)
 
 
 def _chart_error(message: str) -> dict[str, Any]:

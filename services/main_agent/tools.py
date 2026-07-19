@@ -1,8 +1,9 @@
 import json
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from services.main_agent.charts import CHART_BUILDERS
+from services.main_agent.charts import CHART_BUILDERS, CHART_TYPE_BY_TOOL
 from services.main_agent.config import (
     MAX_EXPORT_RESULT_MB,
     MAX_PARALLEL_QUERIES,
@@ -96,14 +97,25 @@ LIST_SANDBOX_FILES_TOOL = {
     },
 }
 
+CHART_ID_PROPERTY = {
+    "chart_id": {
+        "type": "string",
+        "description": (
+            "Id существующего графика для обновления (из active_charts / tool_result). "
+            "Без chart_id — создаётся новый график."
+        ),
+    },
+}
+
 RENDER_GAUGE_TOOL = {
     "type": "function",
     "function": {
         "name": "render_gauge",
-        "description": "Подготовить JSON для gauge-графика. Рисует клиент.",
+        "description": "Подготовить JSON для gauge. Новый график — без chart_id; обновление — передай chart_id.",
         "parameters": {
             "type": "object",
             "properties": {
+                **CHART_ID_PROPERTY,
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "value": {"type": "number"},
@@ -120,10 +132,11 @@ RENDER_PIE_CHART_TOOL = {
     "type": "function",
     "function": {
         "name": "render_pie_chart",
-        "description": "Подготовить JSON для pie chart. Рисует клиент.",
+        "description": "Подготовить JSON для pie chart. Новый — без chart_id; обновление — передай chart_id.",
         "parameters": {
             "type": "object",
             "properties": {
+                **CHART_ID_PROPERTY,
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "slices": {
@@ -147,10 +160,11 @@ RENDER_BAR_CHART_TOOL = {
     "type": "function",
     "function": {
         "name": "render_bar_chart",
-        "description": "Подготовить JSON для bar chart. Рисует клиент.",
+        "description": "Подготовить JSON для bar chart. Новый — без chart_id; обновление — передай chart_id.",
         "parameters": {
             "type": "object",
             "properties": {
+                **CHART_ID_PROPERTY,
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "categories": {"type": "array", "items": {"type": "string"}},
@@ -176,10 +190,11 @@ RENDER_LINE_CHART_TOOL = {
     "type": "function",
     "function": {
         "name": "render_line_chart",
-        "description": "Подготовить JSON для line chart. Рисует клиент.",
+        "description": "Подготовить JSON для line chart. Новый — без chart_id; обновление — передай chart_id.",
         "parameters": {
             "type": "object",
             "properties": {
+                **CHART_ID_PROPERTY,
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "categories": {"type": "array", "items": {"type": "string"}},
@@ -204,10 +219,11 @@ RENDER_SCATTER_CHART_TOOL = {
     "type": "function",
     "function": {
         "name": "render_scatter_chart",
-        "description": "Подготовить JSON для scatter chart. Рисует клиент.",
+        "description": "Подготовить JSON для scatter chart. Новый — без chart_id; обновление — передай chart_id.",
         "parameters": {
             "type": "object",
             "properties": {
+                **CHART_ID_PROPERTY,
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "x_label": {"type": "string"},
@@ -309,7 +325,12 @@ def _run_single_sql(tool_call_id: str, sql: str) -> dict[str, Any]:
         return _error_detail(tool_call_id, "execute_sql", error.payload, sql=sql)
 
 
-def _dispatch_chart_tool(name: str, arguments: dict[str, Any], tool_call_id: str) -> dict[str, Any]:
+def _dispatch_chart_tool(
+    name: str,
+    arguments: dict[str, Any],
+    tool_call_id: str,
+    active_charts_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     builder = CHART_BUILDERS.get(name)
     if builder is None:
         return _error_detail(
@@ -318,8 +339,43 @@ def _dispatch_chart_tool(name: str, arguments: dict[str, Any], tool_call_id: str
             {"ok": False, "error_type": "unknown_tool", "message": f"Неизвестный chart-инструмент: {name}"},
         )
 
-    result = builder(arguments)
+    payload = dict(arguments)
+    chart_id = str(payload.pop("chart_id", "") or "").strip()
+    expected_type = CHART_TYPE_BY_TOOL[name]
+
+    if chart_id:
+        active_chart = active_charts_by_id.get(chart_id)
+        if active_chart is None:
+            return _error_detail(
+                tool_call_id,
+                name,
+                {
+                    "ok": False,
+                    "error_type": "chart_not_found",
+                    "message": f"График chart_id={chart_id!r} не найден среди active_charts",
+                    "chart_id": chart_id,
+                },
+            )
+        if active_chart.get("chart_type") != expected_type:
+            return _error_detail(
+                tool_call_id,
+                name,
+                {
+                    "ok": False,
+                    "error_type": "chart_type_mismatch",
+                    "message": (
+                        f"График {chart_id!r} имеет тип {active_chart.get('chart_type')!r}, "
+                        f"а tool {name} создаёт {expected_type!r}"
+                    ),
+                    "chart_id": chart_id,
+                },
+            )
+    else:
+        chart_id = str(uuid.uuid4())
+
+    result = builder(payload)
     if result.get("ok", False):
+        result["chart_id"] = chart_id
         return _success_detail(tool_call_id, name, result)
     return _error_detail(tool_call_id, name, result)
 
@@ -368,7 +424,11 @@ def _dispatch_sandbox_tool(chat_id: str, name: str, arguments: dict[str, Any], t
         )
 
 
-def _execute_one(chat_id: str, tool_call: dict[str, Any]) -> dict[str, Any]:
+def _execute_one(
+    chat_id: str,
+    tool_call: dict[str, Any],
+    active_charts_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     function = tool_call.get("function", {})
     name = function.get("name", "")
     arguments = json.loads(function.get("arguments") or "{}")
@@ -384,7 +444,7 @@ def _execute_one(chat_id: str, tool_call: dict[str, Any]) -> dict[str, Any]:
         return _run_single_sql(tool_call["id"], sql)
 
     if name in CHART_TOOL_NAMES:
-        return _dispatch_chart_tool(name, arguments, tool_call["id"])
+        return _dispatch_chart_tool(name, arguments, tool_call["id"], active_charts_by_id)
 
     if name in SANDBOX_TOOL_NAMES:
         return _dispatch_sandbox_tool(chat_id, name, arguments, tool_call["id"])
@@ -401,9 +461,15 @@ def execute_tool_calls(tool_calls: list[dict[str, Any]], chat_id: str) -> list[d
     return [item["message"] for item in detailed]
 
 
-def execute_tool_calls_detailed(tool_calls: list[dict[str, Any]], chat_id: str) -> list[dict[str, Any]]:
+def execute_tool_calls_detailed(
+    tool_calls: list[dict[str, Any]],
+    chat_id: str,
+    active_charts_by_id: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     if not tool_calls:
         return []
+
+    charts_by_id = active_charts_by_id or {}
 
     if len(tool_calls) > MAX_PARALLEL_QUERIES:
         raise ValueError(f"Максимум {MAX_PARALLEL_QUERIES} tool calls за шаг")
@@ -412,14 +478,14 @@ def execute_tool_calls_detailed(tool_calls: list[dict[str, Any]], chat_id: str) 
     has_sql = any(tool_call.get("function", {}).get("name") == "execute_sql" for tool_call in tool_calls)
 
     if has_local:
-        return [_execute_one(chat_id, tool_call) for tool_call in tool_calls]
+        return [_execute_one(chat_id, tool_call, charts_by_id) for tool_call in tool_calls]
 
     if not has_sql:
-        return [_execute_one(chat_id, tool_call) for tool_call in tool_calls]
+        return [_execute_one(chat_id, tool_call, charts_by_id) for tool_call in tool_calls]
 
     prepared = [tool_call for tool_call in tool_calls if tool_call.get("function", {}).get("name") == "execute_sql"]
     if len(prepared) != len(tool_calls):
-        return [_execute_one(chat_id, tool_call) for tool_call in tool_calls]
+        return [_execute_one(chat_id, tool_call, charts_by_id) for tool_call in tool_calls]
 
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=min(len(prepared), MAX_PARALLEL_QUERIES)) as executor:
