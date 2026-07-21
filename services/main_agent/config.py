@@ -33,6 +33,12 @@ MAX_CHART_POINTS = env_int("MAX_CHART_POINTS", 1000)
 MAX_CHART_SERIES = env_int("MAX_CHART_SERIES", 20)
 MAX_PIE_SLICES = env_int("MAX_PIE_SLICES", 50)
 
+# Widget limits
+MAX_TABLE_ROWS = env_int("MAX_TABLE_ROWS", 100)
+MAX_TABLE_COLUMNS = env_int("MAX_TABLE_COLUMNS", 20)
+MAX_INSIGHT_POINTS = env_int("MAX_INSIGHT_POINTS", 5)
+MAX_DATA_QUALITY_CHECKS = env_int("MAX_DATA_QUALITY_CHECKS", 10)
+
 # LLM
 MODEL_URL = env_str("MODEL_URL", "https://api.deepseek.com")
 MODEL_NAME = env_str("MODEL_NAME", "deepseek-chat")
@@ -58,11 +64,23 @@ SYSTEM_PROMPT_TEMPLATE = """Ты SQL-ассистент для анализа б
 - render_bar_chart — JSON для bar chart
 - render_line_chart — JSON для line chart
 - render_scatter_chart — JSON для scatter chart
+- render_kpi — KPI-карточка с числом, единицей, изменением и статусом
+- render_insight — карточка выводов с summary и points
+- render_data_quality — статус качества данных и проверки
+- render_table — таблица с колонками, строками и опциональной сортировкой
 
 Графики:
 - Без `chart_id` в chart-tool — создаётся новый график; в ответе tool будет `chart_id` для клиента
 - С `chart_id` из списка активных графиков ниже — обновление существующего (тип tool должен совпадать с chart_type)
 - Актуальный список графиков на экране клиента присылает фронт каждым запросом
+
+Виджеты дашборда:
+- Без `widget_id` в widget-tool — создаётся новый виджет; в ответе tool будет `widget_id` для клиента
+- С `widget_id` из списка активных виджетов ниже — обновление существующего (тип tool должен совпадать с widget_type)
+- KPI: value обязателен; опционально unit, period, label, change (value, direction up/down/flat, label), status
+- Insight: summary и points (text, evidence) обязательны; опционально period, confidence (high/medium/low)
+- Data quality: status и checks (name, label, status, value, detail) обязательны; опционально freshness
+- Table: columns (key, label, format) и rows обязательны; до {max_table_rows} строк, до {max_table_columns} колонок
 
 Правила:
 - Разрешены только read-only SQL-запросы (SELECT, WITH, EXPLAIN, SHOW, TABLE, COPY TO и др.)
@@ -73,6 +91,7 @@ SYSTEM_PROMPT_TEMPLATE = """Ты SQL-ассистент для анализа б
 - Перед Python-анализом вызови create_sandbox, если нужна чистая среда
 - Можешь вызывать execute_sql несколько раз за один шаг (до {max_parallel_queries} параллельных запросов)
 - Для визуализации используй chart-инструменты: они возвращают JSON spec, график рисует клиент
+- Для KPI, выводов, качества данных и таблиц используй widget-инструменты: они возвращают JSON spec, рендерит клиент
 - Отвечай на русском языке, чётко и по делу
 
 ## Метаданные БД (актуальные на момент запроса)
@@ -82,5 +101,9 @@ SYSTEM_PROMPT_TEMPLATE = """Ты SQL-ассистент для анализа б
 ## Активные графики на экране клиента
 
 {active_charts}
+
+## Активные виджеты на экране клиента
+
+{active_widgets}
 """
 # ========================

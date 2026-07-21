@@ -14,6 +14,17 @@ class ActiveChart(BaseModel):
     spec: dict[str, Any] = Field(default_factory=dict)
 
 
+class ActiveWidget(BaseModel):
+    widget_id: str = Field(min_length=1, description="Уникальный id виджета на клиенте")
+    widget_type: str = Field(
+        description="Тип: kpi | insight | data_quality | table",
+        examples=["kpi", "table"],
+    )
+    title: str = Field(min_length=1)
+    description: str | None = None
+    spec: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatRequest(BaseModel):
     """Тело запроса к агенту."""
 
@@ -34,6 +45,13 @@ class ChatRequest(BaseModel):
         description=(
             "Графики, которые сейчас показаны на экране клиента. "
             "Агент видит их в промпте и может обновить через chart-tool с тем же chart_id."
+        ),
+    )
+    active_widgets: list[ActiveWidget] = Field(
+        default_factory=list,
+        description=(
+            "Виджеты дашборда (KPI, insight, data quality, table), показанные на экране клиента. "
+            "Агент видит их в промпте и может обновить через widget-tool с тем же widget_id."
         ),
     )
 

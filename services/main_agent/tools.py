@@ -5,9 +5,13 @@ from typing import Any
 
 from services.main_agent.charts import CHART_BUILDERS, CHART_TYPE_BY_TOOL
 from services.main_agent.config import (
+    MAX_DATA_QUALITY_CHECKS,
     MAX_EXPORT_RESULT_MB,
+    MAX_INSIGHT_POINTS,
     MAX_PARALLEL_QUERIES,
     MAX_QUERY_RESULT_CHARS,
+    MAX_TABLE_COLUMNS,
+    MAX_TABLE_ROWS,
     SANDBOX_MAX_FILE_MB,
 )
 from services.main_agent.db_orch_client import DbOrchError, execute_sql
@@ -18,6 +22,7 @@ from services.main_agent.sandbox_client import (
     run_python,
     save_sql_to_sandbox,
 )
+from services.main_agent.widgets import WIDGET_BUILDERS, WIDGET_TYPE_BY_TOOL
 
 EXECUTE_SQL_TOOL = {
     "type": "function",
@@ -246,6 +251,168 @@ RENDER_SCATTER_CHART_TOOL = {
     },
 }
 
+WIDGET_ID_PROPERTY = {
+    "widget_id": {
+        "type": "string",
+        "description": (
+            "Id существующего виджета для обновления (из active_widgets / tool_result). "
+            "Без widget_id — создаётся новый виджет."
+        ),
+    },
+}
+
+RENDER_KPI_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "render_kpi",
+        "description": "Подготовить JSON для KPI-карточки. Новый — без widget_id; обновление — передай widget_id.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                **WIDGET_ID_PROPERTY,
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "label": {"type": "string", "description": "Подпись к метрике, например «Выручка»"},
+                "value": {"type": "number"},
+                "unit": {"type": "string"},
+                "period": {"type": "string"},
+                "status": {"type": "string", "enum": ["good", "warning", "critical", "neutral", "info"]},
+                "change": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": "number"},
+                        "direction": {"type": "string", "enum": ["up", "down", "flat"]},
+                        "unit": {"type": "string", "description": "percent или абсолютная единица"},
+                        "label": {"type": "string"},
+                    },
+                    "required": ["value"],
+                },
+            },
+            "required": ["title", "value"],
+        },
+    },
+}
+
+RENDER_INSIGHT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "render_insight",
+        "description": "Подготовить JSON для insight-карточки. Новый — без widget_id; обновление — передай widget_id.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                **WIDGET_ID_PROPERTY,
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "summary": {"type": "string", "description": "Главный вывод в 1-2 предложениях"},
+                "period": {"type": "string"},
+                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                "points": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "evidence": {"type": "string"},
+                        },
+                        "required": ["text"],
+                    },
+                    "description": f"Ключевые тезисы, до {MAX_INSIGHT_POINTS} пунктов",
+                },
+            },
+            "required": ["title", "summary", "points"],
+        },
+    },
+}
+
+RENDER_DATA_QUALITY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "render_data_quality",
+        "description": "Подготовить JSON для data quality виджета. Новый — без widget_id; обновление — передай widget_id.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                **WIDGET_ID_PROPERTY,
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "status": {"type": "string", "enum": ["good", "warning", "critical", "neutral", "info"]},
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "label": {"type": "string"},
+                            "status": {"type": "string", "enum": ["good", "warning", "critical", "neutral", "info"]},
+                            "value": {"type": "string"},
+                            "detail": {"type": "string"},
+                        },
+                        "required": ["name", "label", "status"],
+                    },
+                    "description": f"Проверки качества данных, до {MAX_DATA_QUALITY_CHECKS} штук",
+                },
+                "freshness": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string"},
+                        "value": {"type": "string"},
+                        "status": {"type": "string", "enum": ["good", "warning", "critical", "neutral", "info"]},
+                    },
+                    "required": ["label", "value"],
+                },
+            },
+            "required": ["title", "status", "checks"],
+        },
+    },
+}
+
+RENDER_TABLE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "render_table",
+        "description": "Подготовить JSON для таблицы. Новый — без widget_id; обновление — передай widget_id.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                **WIDGET_ID_PROPERTY,
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"},
+                            "label": {"type": "string"},
+                            "format": {
+                                "type": "string",
+                                "enum": ["text", "number", "currency", "percent", "date", "datetime"],
+                            },
+                        },
+                        "required": ["key", "label"],
+                    },
+                    "description": f"До {MAX_TABLE_COLUMNS} колонок",
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": f"До {MAX_TABLE_ROWS} строк; ключи должны совпадать с columns.key",
+                },
+                "sort": {
+                    "type": "object",
+                    "properties": {
+                        "column": {"type": "string"},
+                        "direction": {"type": "string", "enum": ["asc", "desc"]},
+                    },
+                    "required": ["column"],
+                },
+            },
+            "required": ["title", "columns", "rows"],
+        },
+    },
+}
+
 SANDBOX_TOOL_NAMES = {
     "create_sandbox",
     "save_sql_to_sandbox",
@@ -254,8 +421,9 @@ SANDBOX_TOOL_NAMES = {
 }
 
 CHART_TOOL_NAMES = set(CHART_BUILDERS)
+WIDGET_TOOL_NAMES = set(WIDGET_BUILDERS)
 
-LOCAL_TOOL_NAMES = SANDBOX_TOOL_NAMES | CHART_TOOL_NAMES
+LOCAL_TOOL_NAMES = SANDBOX_TOOL_NAMES | CHART_TOOL_NAMES | WIDGET_TOOL_NAMES
 
 TOOLS = [
     EXECUTE_SQL_TOOL,
@@ -268,6 +436,10 @@ TOOLS = [
     RENDER_BAR_CHART_TOOL,
     RENDER_LINE_CHART_TOOL,
     RENDER_SCATTER_CHART_TOOL,
+    RENDER_KPI_TOOL,
+    RENDER_INSIGHT_TOOL,
+    RENDER_DATA_QUALITY_TOOL,
+    RENDER_TABLE_TOOL,
 ]
 
 
@@ -380,6 +552,61 @@ def _dispatch_chart_tool(
     return _error_detail(tool_call_id, name, result)
 
 
+def _dispatch_widget_tool(
+    name: str,
+    arguments: dict[str, Any],
+    tool_call_id: str,
+    active_widgets_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    builder = WIDGET_BUILDERS.get(name)
+    if builder is None:
+        return _error_detail(
+            tool_call_id,
+            name,
+            {"ok": False, "error_type": "unknown_tool", "message": f"Неизвестный widget-инструмент: {name}"},
+        )
+
+    payload = dict(arguments)
+    widget_id = str(payload.pop("widget_id", "") or "").strip()
+    expected_type = WIDGET_TYPE_BY_TOOL[name]
+
+    if widget_id:
+        active_widget = active_widgets_by_id.get(widget_id)
+        if active_widget is None:
+            return _error_detail(
+                tool_call_id,
+                name,
+                {
+                    "ok": False,
+                    "error_type": "widget_not_found",
+                    "message": f"Виджет widget_id={widget_id!r} не найден среди active_widgets",
+                    "widget_id": widget_id,
+                },
+            )
+        if active_widget.get("widget_type") != expected_type:
+            return _error_detail(
+                tool_call_id,
+                name,
+                {
+                    "ok": False,
+                    "error_type": "widget_type_mismatch",
+                    "message": (
+                        f"Виджет {widget_id!r} имеет тип {active_widget.get('widget_type')!r}, "
+                        f"а tool {name} создаёт {expected_type!r}"
+                    ),
+                    "widget_id": widget_id,
+                },
+            )
+    else:
+        widget_id = str(uuid.uuid4())
+
+    result = builder(payload)
+    if result.get("ok", False):
+        result["widget_id"] = widget_id
+        return _success_detail(tool_call_id, name, result)
+    return _error_detail(tool_call_id, name, result)
+
+
 def _dispatch_sandbox_tool(chat_id: str, name: str, arguments: dict[str, Any], tool_call_id: str) -> dict[str, Any]:
     try:
         if name == "create_sandbox":
@@ -428,6 +655,7 @@ def _execute_one(
     chat_id: str,
     tool_call: dict[str, Any],
     active_charts_by_id: dict[str, dict[str, Any]],
+    active_widgets_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     function = tool_call.get("function", {})
     name = function.get("name", "")
@@ -445,6 +673,9 @@ def _execute_one(
 
     if name in CHART_TOOL_NAMES:
         return _dispatch_chart_tool(name, arguments, tool_call["id"], active_charts_by_id)
+
+    if name in WIDGET_TOOL_NAMES:
+        return _dispatch_widget_tool(name, arguments, tool_call["id"], active_widgets_by_id)
 
     if name in SANDBOX_TOOL_NAMES:
         return _dispatch_sandbox_tool(chat_id, name, arguments, tool_call["id"])
@@ -465,11 +696,13 @@ def execute_tool_calls_detailed(
     tool_calls: list[dict[str, Any]],
     chat_id: str,
     active_charts_by_id: dict[str, dict[str, Any]] | None = None,
+    active_widgets_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if not tool_calls:
         return []
 
     charts_by_id = active_charts_by_id or {}
+    widgets_by_id = active_widgets_by_id or {}
 
     if len(tool_calls) > MAX_PARALLEL_QUERIES:
         raise ValueError(f"Максимум {MAX_PARALLEL_QUERIES} tool calls за шаг")
@@ -478,14 +711,20 @@ def execute_tool_calls_detailed(
     has_sql = any(tool_call.get("function", {}).get("name") == "execute_sql" for tool_call in tool_calls)
 
     if has_local:
-        return [_execute_one(chat_id, tool_call, charts_by_id) for tool_call in tool_calls]
+        return [
+            _execute_one(chat_id, tool_call, charts_by_id, widgets_by_id) for tool_call in tool_calls
+        ]
 
     if not has_sql:
-        return [_execute_one(chat_id, tool_call, charts_by_id) for tool_call in tool_calls]
+        return [
+            _execute_one(chat_id, tool_call, charts_by_id, widgets_by_id) for tool_call in tool_calls
+        ]
 
     prepared = [tool_call for tool_call in tool_calls if tool_call.get("function", {}).get("name") == "execute_sql"]
     if len(prepared) != len(tool_calls):
-        return [_execute_one(chat_id, tool_call, charts_by_id) for tool_call in tool_calls]
+        return [
+            _execute_one(chat_id, tool_call, charts_by_id, widgets_by_id) for tool_call in tool_calls
+        ]
 
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=min(len(prepared), MAX_PARALLEL_QUERIES)) as executor:
