@@ -1,7 +1,7 @@
 import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Callable
 
 from services.main_agent.charts import CHART_BUILDERS, CHART_TYPE_BY_TOOL
 from services.main_agent.config import (
@@ -489,6 +489,49 @@ def _error_detail(
     return detail
 
 
+def _tool_name(tool_call: dict[str, Any]) -> str:
+    return (tool_call.get("function") or {}).get("name") or "unknown"
+
+
+def _tool_batch_error(
+    tool_calls: list[dict[str, Any]],
+    error_type: str,
+    message: str,
+) -> list[dict[str, Any]]:
+    return [
+        _error_detail(
+            tool_call.get("id") or f"unknown-{index}",
+            _tool_name(tool_call),
+            {
+                "ok": False,
+                "error_type": error_type,
+                "message": message,
+            },
+        )
+        for index, tool_call in enumerate(tool_calls)
+    ]
+
+
+def _parse_tool_arguments(tool_call: dict[str, Any]) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
+    name = _tool_name(tool_call)
+    raw_arguments = (tool_call.get("function") or {}).get("arguments") or "{}"
+    try:
+        arguments = json.loads(raw_arguments)
+    except json.JSONDecodeError as error:
+        return name, None, {
+            "ok": False,
+            "error_type": "invalid_tool_arguments",
+            "message": f"Tool arguments are not valid JSON: {error}",
+        }
+    if not isinstance(arguments, dict):
+        return name, None, {
+            "ok": False,
+            "error_type": "invalid_tool_arguments",
+            "message": "Tool arguments must be a JSON object.",
+        }
+    return name, arguments, None
+
+
 def _run_single_sql(tool_call_id: str, sql: str) -> dict[str, Any]:
     try:
         result = execute_sql(sql)
@@ -607,6 +650,16 @@ def _dispatch_widget_tool(
     return _error_detail(tool_call_id, name, result)
 
 
+def _call_with_autocreate(chat_id: str, action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return action()
+    except SandboxServiceError as error:
+        if error.payload.get("error_type") != "sandbox_not_ready":
+            raise
+        create_sandbox(chat_id)
+        return action()
+
+
 def _dispatch_sandbox_tool(chat_id: str, name: str, arguments: dict[str, Any], tool_call_id: str) -> dict[str, Any]:
     try:
         if name == "create_sandbox":
@@ -617,7 +670,7 @@ def _dispatch_sandbox_tool(chat_id: str, name: str, arguments: dict[str, Any], t
             code = arguments.get("code", "").strip()
             if not code:
                 raise ValueError("run_python требует code")
-            result = run_python(chat_id, code)
+            result = _call_with_autocreate(chat_id, lambda: run_python(chat_id, code))
             if result.get("ok", False):
                 return _success_detail(tool_call_id, name, result)
             return _error_detail(tool_call_id, name, result)
@@ -628,7 +681,9 @@ def _dispatch_sandbox_tool(chat_id: str, name: str, arguments: dict[str, Any], t
             file_format = arguments.get("format", "").strip()
             if not sql or not filename or not file_format:
                 raise ValueError("save_sql_to_sandbox требует sql, filename, format")
-            result = save_sql_to_sandbox(chat_id, sql, filename, file_format)
+            result = _call_with_autocreate(
+                chat_id, lambda: save_sql_to_sandbox(chat_id, sql, filename, file_format)
+            )
             return _success_detail(tool_call_id, name, result, sql=sql)
 
         if name == "list_sandbox_files":
@@ -657,34 +712,57 @@ def _execute_one(
     active_charts_by_id: dict[str, dict[str, Any]],
     active_widgets_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    function = tool_call.get("function", {})
-    name = function.get("name", "")
-    arguments = json.loads(function.get("arguments") or "{}")
+    tool_call_id = tool_call.get("id") or "unknown"
+    name, arguments, parse_error = _parse_tool_arguments(tool_call)
+    if parse_error is not None:
+        return _error_detail(tool_call_id, name, parse_error)
 
     if name == "execute_sql":
         sql = arguments.get("sql", "").strip()
         if not sql:
             return _error_detail(
-                tool_call["id"],
+                tool_call_id,
                 name,
                 {"ok": False, "error_type": "invalid_arguments", "message": "execute_sql требует sql"},
             )
-        return _run_single_sql(tool_call["id"], sql)
+        return _run_single_sql(tool_call_id, sql)
 
     if name in CHART_TOOL_NAMES:
-        return _dispatch_chart_tool(name, arguments, tool_call["id"], active_charts_by_id)
+        return _dispatch_chart_tool(name, arguments, tool_call_id, active_charts_by_id)
 
     if name in WIDGET_TOOL_NAMES:
-        return _dispatch_widget_tool(name, arguments, tool_call["id"], active_widgets_by_id)
+        return _dispatch_widget_tool(name, arguments, tool_call_id, active_widgets_by_id)
 
     if name in SANDBOX_TOOL_NAMES:
-        return _dispatch_sandbox_tool(chat_id, name, arguments, tool_call["id"])
+        return _dispatch_sandbox_tool(chat_id, name, arguments, tool_call_id)
 
     return _error_detail(
-        tool_call["id"],
-        name or "unknown",
+        tool_call_id,
+        name,
         {"ok": False, "error_type": "unknown_tool", "message": f"Неизвестный инструмент: {name}"},
     )
+
+
+def _safe_execute_one(
+    chat_id: str,
+    tool_call: dict[str, Any],
+    active_charts_by_id: dict[str, dict[str, Any]],
+    active_widgets_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    tool_call_id = tool_call.get("id") or "unknown"
+    name = _tool_name(tool_call)
+    try:
+        return _execute_one(chat_id, tool_call, active_charts_by_id, active_widgets_by_id)
+    except Exception as error:
+        return _error_detail(
+            tool_call_id,
+            name,
+            {
+                "ok": False,
+                "error_type": "tool_execution_error",
+                "message": str(error),
+            },
+        )
 
 
 def execute_tool_calls(tool_calls: list[dict[str, Any]], chat_id: str) -> list[dict[str, Any]]:
@@ -701,38 +779,65 @@ def execute_tool_calls_detailed(
     if not tool_calls:
         return []
 
-    charts_by_id = active_charts_by_id or {}
-    widgets_by_id = active_widgets_by_id or {}
-
     if len(tool_calls) > MAX_PARALLEL_QUERIES:
-        raise ValueError(f"Максимум {MAX_PARALLEL_QUERIES} tool calls за шаг")
+        return _tool_batch_error(
+            tool_calls,
+            "tool_limit_exceeded",
+            (
+                f"Too many tool calls in one step ({len(tool_calls)}). "
+                f"Maximum is {MAX_PARALLEL_QUERIES}. "
+                f"Retry with at most {MAX_PARALLEL_QUERIES} tools per step."
+            ),
+        )
 
-    has_local = any(tool_call.get("function", {}).get("name") in LOCAL_TOOL_NAMES for tool_call in tool_calls)
-    has_sql = any(tool_call.get("function", {}).get("name") == "execute_sql" for tool_call in tool_calls)
+    try:
+        return _execute_tool_calls_detailed(
+            tool_calls,
+            chat_id,
+            active_charts_by_id or {},
+            active_widgets_by_id or {},
+        )
+    except Exception as error:
+        return _tool_batch_error(
+            tool_calls,
+            "tool_execution_error",
+            str(error),
+        )
+
+
+def _execute_tool_calls_detailed(
+    tool_calls: list[dict[str, Any]],
+    chat_id: str,
+    charts_by_id: dict[str, dict[str, Any]],
+    widgets_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    has_local = any(_tool_name(tool_call) in LOCAL_TOOL_NAMES for tool_call in tool_calls)
+    has_sql = any(_tool_name(tool_call) == "execute_sql" for tool_call in tool_calls)
 
     if has_local:
         return [
-            _execute_one(chat_id, tool_call, charts_by_id, widgets_by_id) for tool_call in tool_calls
+            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id)
+            for tool_call in tool_calls
         ]
 
     if not has_sql:
         return [
-            _execute_one(chat_id, tool_call, charts_by_id, widgets_by_id) for tool_call in tool_calls
+            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id)
+            for tool_call in tool_calls
         ]
 
-    prepared = [tool_call for tool_call in tool_calls if tool_call.get("function", {}).get("name") == "execute_sql"]
+    prepared = [tool_call for tool_call in tool_calls if _tool_name(tool_call) == "execute_sql"]
     if len(prepared) != len(tool_calls):
         return [
-            _execute_one(chat_id, tool_call, charts_by_id, widgets_by_id) for tool_call in tool_calls
+            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id)
+            for tool_call in tool_calls
         ]
 
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=min(len(prepared), MAX_PARALLEL_QUERIES)) as executor:
         futures = {}
         for tool_call in prepared:
-            arguments = json.loads(tool_call.get("function", {}).get("arguments") or "{}")
-            sql = arguments.get("sql", "").strip()
-            future = executor.submit(_run_single_sql, tool_call["id"], sql)
+            future = executor.submit(_safe_execute_one, chat_id, tool_call, charts_by_id, widgets_by_id)
             futures[future] = tool_call["id"]
         for future in as_completed(futures):
             results.append(future.result())
