@@ -68,6 +68,17 @@ def _chart_error(message: str) -> dict[str, Any]:
     }
 
 
+def build_remove_chart(chart_id: str, active_chart: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "kind": "chart",
+        "action": "remove",
+        "chart_id": chart_id,
+        "chart_type": active_chart.get("chart_type"),
+        "title": active_chart.get("title"),
+    }
+
+
 def _require_title(title: str) -> str:
     value = title.strip()
     if not value:

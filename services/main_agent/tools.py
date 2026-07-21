@@ -3,7 +3,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
-from services.main_agent.charts import CHART_BUILDERS, CHART_TYPE_BY_TOOL
+from services.main_agent.charts import CHART_BUILDERS, CHART_TYPE_BY_TOOL, build_remove_chart
 from services.main_agent.config import (
     MAX_DATA_QUALITY_CHECKS,
     MAX_EXPORT_RESULT_MB,
@@ -251,6 +251,27 @@ RENDER_SCATTER_CHART_TOOL = {
     },
 }
 
+REMOVE_CHART_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "remove_chart",
+        "description": (
+            "Удалить график с дашборда клиента. "
+            "Передай chart_id из active_charts или из предыдущего tool_result."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "chart_id": {
+                    "type": "string",
+                    "description": "Id графика, который нужно удалить с экрана клиента.",
+                },
+            },
+            "required": ["chart_id"],
+        },
+    },
+}
+
 WIDGET_ID_PROPERTY = {
     "widget_id": {
         "type": "string",
@@ -420,7 +441,7 @@ SANDBOX_TOOL_NAMES = {
     "list_sandbox_files",
 }
 
-CHART_TOOL_NAMES = set(CHART_BUILDERS)
+CHART_TOOL_NAMES = set(CHART_BUILDERS) | {"remove_chart"}
 WIDGET_TOOL_NAMES = set(WIDGET_BUILDERS)
 
 LOCAL_TOOL_NAMES = SANDBOX_TOOL_NAMES | CHART_TOOL_NAMES | WIDGET_TOOL_NAMES
@@ -436,6 +457,7 @@ TOOLS = [
     RENDER_BAR_CHART_TOOL,
     RENDER_LINE_CHART_TOOL,
     RENDER_SCATTER_CHART_TOOL,
+    REMOVE_CHART_TOOL,
     RENDER_KPI_TOOL,
     RENDER_INSIGHT_TOOL,
     RENDER_DATA_QUALITY_TOOL,
@@ -595,6 +617,40 @@ def _dispatch_chart_tool(
     return _error_detail(tool_call_id, name, result)
 
 
+def _dispatch_remove_chart(
+    arguments: dict[str, Any],
+    tool_call_id: str,
+    active_charts_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    chart_id = str(arguments.get("chart_id", "") or "").strip()
+    if not chart_id:
+        return _error_detail(
+            tool_call_id,
+            "remove_chart",
+            {
+                "ok": False,
+                "error_type": "chart_validation_error",
+                "message": "remove_chart требует chart_id",
+            },
+        )
+
+    active_chart = active_charts_by_id.get(chart_id)
+    if active_chart is None:
+        return _error_detail(
+            tool_call_id,
+            "remove_chart",
+            {
+                "ok": False,
+                "error_type": "chart_not_found",
+                "message": f"График chart_id={chart_id!r} не найден среди active_charts",
+                "chart_id": chart_id,
+            },
+        )
+
+    result = build_remove_chart(chart_id, active_chart)
+    return _success_detail(tool_call_id, "remove_chart", result)
+
+
 def _dispatch_widget_tool(
     name: str,
     arguments: dict[str, Any],
@@ -727,7 +783,10 @@ def _execute_one(
             )
         return _run_single_sql(tool_call_id, sql)
 
-    if name in CHART_TOOL_NAMES:
+    if name == "remove_chart":
+        return _dispatch_remove_chart(arguments, tool_call_id, active_charts_by_id)
+
+    if name in CHART_BUILDERS:
         return _dispatch_chart_tool(name, arguments, tool_call_id, active_charts_by_id)
 
     if name in WIDGET_TOOL_NAMES:

@@ -75,6 +75,7 @@ Do not stop the analysis because of a single tool failure.
 - run_python — run Python in the stateful sandbox (numpy, pandas), timeout {sandbox_exec_timeout_sec}s
 - list_sandbox_files — list files currently in the sandbox
 - render_gauge / render_pie_chart / render_bar_chart / render_line_chart / render_scatter_chart — chart specs (client renders)
+- remove_chart — remove a chart from the client's dashboard by chart_id
 - render_kpi — KPI card: a single number with unit, period, change and status
 - render_insight — insight card: a summary plus key points backed by evidence
 - render_data_quality — data quality status with individual checks
@@ -107,9 +108,10 @@ Every chart and widget must be self-explanatory and easy to read:
 - Round numbers to a human-friendly precision and keep labels short.
 - One idea per chart. Use several focused charts instead of one crowded chart.
 
-# Charts: create vs update
+# Charts: create vs update vs remove
 - Chart tool WITHOUT `chart_id` creates a new chart; the tool result returns a `chart_id` for the client.
 - Chart tool WITH a `chart_id` from the active charts below updates that chart (tool type must match its chart_type).
+- remove_chart WITH a `chart_id` from the active charts below removes that chart from the client's dashboard.
 - The client sends the current on-screen charts with every request. Reuse ids to update instead of duplicating.
 
 # Dashboard widgets: create vs update

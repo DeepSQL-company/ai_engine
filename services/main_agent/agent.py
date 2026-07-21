@@ -167,6 +167,8 @@ def stream_agent(
             if detail.get("success") and detail["result"].get("kind") == "chart":
                 event["chart_type"] = detail["result"].get("chart_type")
                 event["chart_id"] = detail["result"].get("chart_id")
+                if detail["result"].get("action"):
+                    event["action"] = detail["result"]["action"]
             if detail.get("success") and detail["result"].get("kind") == "widget":
                 event["widget_type"] = detail["result"].get("widget_type")
                 event["widget_id"] = detail["result"].get("widget_id")
