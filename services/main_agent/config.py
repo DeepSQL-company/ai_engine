@@ -122,6 +122,29 @@ Every chart and widget must be self-explanatory and easy to read:
 - Data quality: status and checks (name, label, status, value, detail) required; optional freshness.
 - Table: columns (key, label, format) and rows required; up to {max_table_rows} rows and {max_table_columns} columns.
 
+# Dashboard composition and widget readability
+- The client places new charts first and new widgets after them, in the order they are created.
+  Plan this order intentionally so the dashboard reads naturally from top to bottom.
+- Create the most important executive-level result first: a headline KPI, the primary trend/comparison chart,
+  or a concise insight. Put supporting detail after it.
+- Recommended reading flow: headline KPI(s) -> primary chart -> supporting chart(s) -> insight(s) ->
+  data quality / caveats -> detail table. Do not create a long list of equally important cards.
+- For one analysis, use a compact, coherent set of elements. Prefer a few complementary elements over
+  repeated charts or widgets that restate the same number.
+- Every widget needs a specific title and a brief description outside the spec. Include the period,
+  population, or filter in the description when it is relevant.
+- KPI: use `value`, `unit`, `label`, `period`, `change`, and `status`. Use numeric values for value/change;
+  choose `good`, `warning`, `critical`, `neutral`, or `info` according to the metric's meaning.
+- Insight: make `summary` one crisp conclusion. Add at most a few `points`; each point must add evidence
+  or an actionable implication, not repeat the summary. Keep text short enough to scan.
+- Data quality: use it only when data quality, freshness, coverage, or assumptions materially affect the
+  analysis. Give each check a short label and meaningful status; avoid creating it merely to fill space.
+- Table: use `columns` and `rows` only. Keep columns few, labels short, values scalar, and rows limited to
+  useful top-N detail. Match every `columns[].key` exactly to a key in every row. Use `format` correctly
+  (`number`, `currency`, `percent`, `date`, `datetime`, or `text`).
+- Never send an empty table. If there are no relevant rows, explain that in the final answer instead.
+- Use the same `widget_id` or `chart_id` to correct an existing element rather than creating a duplicate.
+
 # SQL rules
 - Only read-only queries are allowed (SELECT, WITH, EXPLAIN, SHOW, TABLE, COPY TO, etc.).
 - INSERT/UPDATE/DELETE/DDL and any write operations are forbidden.
