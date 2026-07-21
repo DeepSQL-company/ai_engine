@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from services.main_agent.charts import CHART_BUILDERS, CHART_TYPE_BY_TOOL, build_remove_chart
 from services.main_agent.config import (
+    ITERATIONS_EXHAUSTED_TOOL_MESSAGE,
     MAX_DATA_QUALITY_CHECKS,
     MAX_EXPORT_RESULT_MB,
     MAX_INSIGHT_POINTS,
@@ -442,6 +443,7 @@ SANDBOX_TOOL_NAMES = {
 }
 
 CHART_TOOL_NAMES = set(CHART_BUILDERS) | {"remove_chart"}
+CHART_RENDER_TOOL_NAMES = set(CHART_BUILDERS)
 WIDGET_TOOL_NAMES = set(WIDGET_BUILDERS)
 
 LOCAL_TOOL_NAMES = SANDBOX_TOOL_NAMES | CHART_TOOL_NAMES | WIDGET_TOOL_NAMES
@@ -762,16 +764,32 @@ def _dispatch_sandbox_tool(chat_id: str, name: str, arguments: dict[str, Any], t
         )
 
 
+def _iterations_exhausted_error(tool_call_id: str, name: str) -> dict[str, Any]:
+    return _error_detail(
+        tool_call_id,
+        name,
+        {
+            "ok": False,
+            "error_type": "iterations_exhausted",
+            "message": ITERATIONS_EXHAUSTED_TOOL_MESSAGE,
+        },
+    )
+
+
 def _execute_one(
     chat_id: str,
     tool_call: dict[str, Any],
     active_charts_by_id: dict[str, dict[str, Any]],
     active_widgets_by_id: dict[str, dict[str, Any]],
+    iterations_exhausted: bool = False,
 ) -> dict[str, Any]:
     tool_call_id = tool_call.get("id") or "unknown"
     name, arguments, parse_error = _parse_tool_arguments(tool_call)
     if parse_error is not None:
         return _error_detail(tool_call_id, name, parse_error)
+
+    if iterations_exhausted and name not in CHART_RENDER_TOOL_NAMES:
+        return _iterations_exhausted_error(tool_call_id, name)
 
     if name == "execute_sql":
         sql = arguments.get("sql", "").strip()
@@ -807,11 +825,18 @@ def _safe_execute_one(
     tool_call: dict[str, Any],
     active_charts_by_id: dict[str, dict[str, Any]],
     active_widgets_by_id: dict[str, dict[str, Any]],
+    iterations_exhausted: bool = False,
 ) -> dict[str, Any]:
     tool_call_id = tool_call.get("id") or "unknown"
     name = _tool_name(tool_call)
     try:
-        return _execute_one(chat_id, tool_call, active_charts_by_id, active_widgets_by_id)
+        return _execute_one(
+            chat_id,
+            tool_call,
+            active_charts_by_id,
+            active_widgets_by_id,
+            iterations_exhausted,
+        )
     except Exception as error:
         return _error_detail(
             tool_call_id,
@@ -834,6 +859,7 @@ def execute_tool_calls_detailed(
     chat_id: str,
     active_charts_by_id: dict[str, dict[str, Any]] | None = None,
     active_widgets_by_id: dict[str, dict[str, Any]] | None = None,
+    iterations_exhausted: bool = False,
 ) -> list[dict[str, Any]]:
     if not tool_calls:
         return []
@@ -855,6 +881,7 @@ def execute_tool_calls_detailed(
             chat_id,
             active_charts_by_id or {},
             active_widgets_by_id or {},
+            iterations_exhausted,
         )
     except Exception as error:
         return _tool_batch_error(
@@ -869,26 +896,27 @@ def _execute_tool_calls_detailed(
     chat_id: str,
     charts_by_id: dict[str, dict[str, Any]],
     widgets_by_id: dict[str, dict[str, Any]],
+    iterations_exhausted: bool = False,
 ) -> list[dict[str, Any]]:
     has_local = any(_tool_name(tool_call) in LOCAL_TOOL_NAMES for tool_call in tool_calls)
     has_sql = any(_tool_name(tool_call) == "execute_sql" for tool_call in tool_calls)
 
     if has_local:
         return [
-            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id)
+            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id, iterations_exhausted)
             for tool_call in tool_calls
         ]
 
     if not has_sql:
         return [
-            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id)
+            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id, iterations_exhausted)
             for tool_call in tool_calls
         ]
 
     prepared = [tool_call for tool_call in tool_calls if _tool_name(tool_call) == "execute_sql"]
     if len(prepared) != len(tool_calls):
         return [
-            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id)
+            _safe_execute_one(chat_id, tool_call, charts_by_id, widgets_by_id, iterations_exhausted)
             for tool_call in tool_calls
         ]
 
@@ -896,7 +924,14 @@ def _execute_tool_calls_detailed(
     with ThreadPoolExecutor(max_workers=min(len(prepared), MAX_PARALLEL_QUERIES)) as executor:
         futures = {}
         for tool_call in prepared:
-            future = executor.submit(_safe_execute_one, chat_id, tool_call, charts_by_id, widgets_by_id)
+            future = executor.submit(
+                _safe_execute_one,
+                chat_id,
+                tool_call,
+                charts_by_id,
+                widgets_by_id,
+                iterations_exhausted,
+            )
             futures[future] = tool_call["id"]
         for future in as_completed(futures):
             results.append(future.result())

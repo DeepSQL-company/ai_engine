@@ -20,6 +20,11 @@ SANDBOX_TIMEOUT_SEC = env_int("SANDBOX_TIMEOUT_SEC", 120)
 # Agent limits
 MAX_PARALLEL_QUERIES = env_int("MAX_PARALLEL_QUERIES", 5)
 MAX_AGENT_ITERATIONS = env_int("MAX_AGENT_ITERATIONS", 15)
+ITERATIONS_EXHAUSTED_TOOL_MESSAGE = (
+    "Лимит итераций агента исчерпан. Заверши отчёт: используй только chart-tools "
+    "(render_gauge, render_pie_chart, render_bar_chart, render_line_chart, render_scatter_chart) "
+    "и дай финальный текстовый ответ без SQL, sandbox, widgets и других tools."
+)
 
 # SQL / sandbox limits (используются в промпте и описаниях tools)
 MAX_QUERY_RESULT_CHARS = env_int("MAX_QUERY_RESULT_CHARS", 5000)
@@ -144,6 +149,11 @@ Every chart and widget must be self-explanatory and easy to read:
   (`number`, `currency`, `percent`, `date`, `datetime`, or `text`).
 - Never send an empty table. If there are no relevant rows, explain that in the final answer instead.
 - Use the same `widget_id` or `chart_id` to correct an existing element rather than creating a duplicate.
+
+# Final iteration (iteration budget exhausted)
+- On the last allowed iteration, SQL, sandbox, widgets, and other non-chart tools are blocked.
+  Chart render tools still work so you can finish the dashboard visuals.
+- If such a tool returns iterations_exhausted, stop retrying it and finalize the report with charts plus a text answer.
 
 # SQL rules
 - Only read-only queries are allowed (SELECT, WITH, EXPLAIN, SHOW, TABLE, COPY TO, etc.).

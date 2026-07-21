@@ -149,6 +149,7 @@ def stream_agent(
             chat_id,
             charts_by_id,
             widgets_by_id,
+            iterations_exhausted=iteration >= MAX_AGENT_ITERATIONS,
         )
         tool_calls_count += len(tool_details)
         sql_calls_count += sum(1 for item in tool_details if item["name"] == "execute_sql")
