@@ -8,6 +8,7 @@ import httpx
 from services.main_agent.config import (
     LLM_LOG_PATH,
     LLM_TIMEOUT_SEC,
+    LOG_LLM_CALLS,
     MODEL_API_KEY,
     MODEL_NAME,
     MODEL_URL,
@@ -30,6 +31,8 @@ def log_llm_call(
     response: dict[str, Any],
     error: str | None = None,
 ) -> None:
+    if not LOG_LLM_CALLS:
+        return
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "model": MODEL_NAME,

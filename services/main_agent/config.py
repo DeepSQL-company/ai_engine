@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from services.common.env_settings import env_int, env_str, load_dotenv, PROJECT_ROOT
+from services.common.env_settings import env_bool, env_int, env_str, load_dotenv, PROJECT_ROOT
 
 load_dotenv()
 
@@ -44,12 +44,27 @@ MAX_TABLE_COLUMNS = env_int("MAX_TABLE_COLUMNS", 20)
 MAX_INSIGHT_POINTS = env_int("MAX_INSIGHT_POINTS", 5)
 MAX_DATA_QUALITY_CHECKS = env_int("MAX_DATA_QUALITY_CHECKS", 10)
 
+# Persistent context
+MAX_RESTORE_CONTEXT_BYTES = env_int("MAX_RESTORE_CONTEXT_BYTES", 524288)
+MAX_CONTEXT_CHECKPOINT_BYTES = env_int("MAX_CONTEXT_CHECKPOINT_BYTES", 2097152)
+MAX_COMPACT_TOOL_RESULT_BYTES = env_int("MAX_COMPACT_TOOL_RESULT_BYTES", 16384)
+CONTEXT_COMPACTION_HIGH_WATER_BYTES = env_int("CONTEXT_COMPACTION_HIGH_WATER_BYTES", 393216)
+
+if not (
+    1024 <= MAX_RESTORE_CONTEXT_BYTES <= 8 * 1024 * 1024
+    and 1024 <= MAX_CONTEXT_CHECKPOINT_BYTES <= 8 * 1024 * 1024
+    and 256 <= MAX_COMPACT_TOOL_RESULT_BYTES <= MAX_CONTEXT_CHECKPOINT_BYTES
+    and 1024 <= CONTEXT_COMPACTION_HIGH_WATER_BYTES <= MAX_RESTORE_CONTEXT_BYTES
+):
+    raise ValueError("persistent context limits are invalid")
+
 # LLM
 MODEL_URL = env_str("MODEL_URL", "https://api.deepseek.com")
 MODEL_NAME = env_str("MODEL_NAME", "deepseek-chat")
 MODEL_API_KEY = env_str("MODEL_API_KEY", "")
 LLM_TIMEOUT_SEC = env_int("LLM_TIMEOUT_SEC", 120)
 LLM_LOG_PATH = Path(env_str("LLM_LOG_PATH", str(PROJECT_ROOT / "logs" / "llm_calls.jsonl")))
+LOG_LLM_CALLS = env_bool("LOG_LLM_CALLS", True)
 
 MAX_EXPORT_RESULT_MB = MAX_EXPORT_RESULT_CHARS // (1024 * 1024)
 SANDBOX_MAX_FILE_MB = SANDBOX_MAX_FILE_BYTES // (1024 * 1024)

@@ -1,13 +1,17 @@
 import logging
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from services.common.api_auth import apply_openapi_api_key, install_api_key_middleware
 from services.common.openapi import DOCS_PUBLIC_PATHS, swagger_kwargs
 from services.main_agent.agent import AgentError, stream_agent
-from services.main_agent.chat_store import chat_store
+from services.main_agent.chat_store import (
+    ChatContextMissingError,
+    SessionDisposition,
+    chat_store,
+)
 from services.main_agent.config import API_KEY, APP_TITLE, HOST, PORT
 from services.main_agent.models import ChatRequest, HealthResponse
 from services.main_agent.sse_events import format_sse
@@ -26,6 +30,7 @@ SSE_EVENT_TYPES = [
     "tool_start",
     "tool_result",
     "answer",
+    "context_checkpoint",
     "error",
     "done",
 ]
@@ -144,7 +149,16 @@ def health() -> HealthResponse:
     },
 )
 def chat(request: ChatRequest) -> StreamingResponse:
-    chat_id, session, is_new = chat_store.get_or_create(request.chat_id)
+    try:
+        chat_id, session, disposition = chat_store.get_or_restore(
+            request.chat_id, request.restore_context
+        )
+    except ChatContextMissingError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"error_type": "chat_context_missing", "message": str(error)},
+        ) from error
+    is_new = disposition == SessionDisposition.NEW
     history_messages_count = len(session.messages)
     chat_store.append_user_message(chat_id, request.message)
     turn_start_index = len(session.messages) - 1
@@ -165,9 +179,21 @@ def chat(request: ChatRequest) -> StreamingResponse:
                 chat_id,
                 [chart.model_dump() for chart in request.active_charts],
                 [widget.model_dump() for widget in request.active_widgets],
+                conversation_summary=session.conversation_summary,
+                turn_start_index=turn_start_index,
+                context_revision=session.context_revision,
+                latest_included_turn_id=session.latest_included_turn_id,
             ):
                 event["chat_id"] = chat_id
+                if event.get("type") == "context_checkpoint" and event.get("summary"):
+                    summary = event["summary"]
+                    session.conversation_summary = summary.get("summary", "")
+                    session.latest_included_turn_id = summary.get(
+                        "summarized_through_turn_id"
+                    )
                 yield format_sse(event)
+                if event.get("type") == "done":
+                    session.context_revision += 1
         except AgentError as error:
             del session.messages[turn_start_index:]
             yield format_sse({"type": "error", "chat_id": chat_id, "message": str(error)})

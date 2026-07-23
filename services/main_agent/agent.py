@@ -12,6 +12,7 @@ from services.main_agent.config import (
     SANDBOX_MAX_FILES,
     SYSTEM_PROMPT_TEMPLATE,
 )
+from services.main_agent.context import checkpoint_event, compact_conversation_if_needed
 from services.main_agent.db_orch_client import DbOrchError, fetch_metadata_text
 from services.main_agent.llm_client import stream_chat_completion
 from services.main_agent.tools import TOOLS, execute_tool_calls_detailed
@@ -27,6 +28,10 @@ def stream_agent(
     chat_id: str,
     active_charts: list[dict[str, Any]] | None = None,
     active_widgets: list[dict[str, Any]] | None = None,
+    conversation_summary: str = "",
+    turn_start_index: int | None = None,
+    context_revision: int = 0,
+    latest_included_turn_id: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     if not conversation or conversation[-1].get("role") != "user":
         raise AgentError("conversation должна заканчиваться user-сообщением")
@@ -35,6 +40,13 @@ def stream_agent(
     active_widgets = active_widgets or []
     charts_by_id = {chart["chart_id"]: chart for chart in active_charts}
     widgets_by_id = {widget["widget_id"]: widget for widget in active_widgets}
+    conversation_summary, summary_update = compact_conversation_if_needed(
+        conversation,
+        conversation_summary,
+        latest_included_turn_id,
+    )
+    if summary_update is not None:
+        turn_start_index = 0
 
     yield {"type": "status", "stage": "metadata", "message": "Загрузка метаданных БД"}
 
@@ -61,6 +73,11 @@ def stream_agent(
         max_table_rows=MAX_TABLE_ROWS,
         max_table_columns=MAX_TABLE_COLUMNS,
     )
+    if conversation_summary:
+        system_prompt += (
+            "\n\n## Factual summary of earlier completed turns\n\n"
+            + conversation_summary
+        )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         *conversation,
@@ -68,7 +85,8 @@ def stream_agent(
 
     sql_calls_count = 0
     tool_calls_count = 0
-    turn_start_index = len(conversation)
+    if turn_start_index is None:
+        turn_start_index = len(conversation) - 1
 
     for iteration in range(1, MAX_AGENT_ITERATIONS + 1):
         yield {
@@ -97,6 +115,11 @@ def stream_agent(
         tool_calls = assistant_message.get("tool_calls") or []
 
         if reasoning:
+            yield checkpoint_event(
+                conversation[turn_start_index:],
+                context_revision,
+                summary_update,
+            )
             yield {
                 "type": "reasoning",
                 "iteration": iteration,
