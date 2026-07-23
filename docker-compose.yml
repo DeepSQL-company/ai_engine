@@ -16,7 +16,7 @@ services:
       DB_READONLY: ${DB_READONLY:-true}
       API_KEY: ${API_KEY:-}
       DB_AUTO_INIT: ${DB_AUTO_INIT:-true}
-      DB_HOST: ${DB_HOST:-host.docker.internal}
+      DB_HOST: ${DB_HOST:-deepsql-demodb-0yrdjn}
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-demo}
       DB_USER: ${DB_USER:-user}
@@ -38,6 +38,7 @@ services:
       start_period: 10s
     networks:
       - ai_engine
+      - dokploy-network
     restart: unless-stopped
 
   sandbox:
@@ -131,3 +132,5 @@ services:
 networks:
   ai_engine:
     driver: bridge
+  dokploy-network:
+    external: true

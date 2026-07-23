@@ -114,7 +114,7 @@ class DbManager:
                 yield cursor
 
     def list_databases(self) -> list[str]:
-        with self._dict_cursor("postgres") as cursor:
+        with self._dict_cursor() as cursor:
             cursor.execute(
                 """
                 SELECT datname
