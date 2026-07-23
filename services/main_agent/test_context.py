@@ -10,6 +10,7 @@ from services.main_agent.chat_store import (
     ChatStore,
     SessionDisposition,
 )
+from services.main_agent.agent import stream_agent
 from services.main_agent.context import (
     canonicalize_turn_messages,
     compact_conversation_if_needed,
@@ -77,6 +78,43 @@ class ChatStoreRestoreTests(unittest.TestCase):
 
 
 class CheckpointTests(unittest.TestCase):
+    def test_stream_always_checkpoints_final_assistant_before_done(self) -> None:
+        conversation = [{"role": "user", "content": "question"}]
+        completion = iter(
+            [
+                {
+                    "type": "llm_complete",
+                    "message": {"role": "assistant", "content": "answer"},
+                }
+            ]
+        )
+        with (
+            patch("services.main_agent.agent.fetch_metadata_text", return_value="metadata"),
+            patch(
+                "services.main_agent.agent.stream_chat_completion",
+                return_value=completion,
+            ),
+        ):
+            events = list(
+                stream_agent(
+                    conversation,
+                    "chat-id",
+                    turn_start_index=0,
+                    context_revision=3,
+                )
+            )
+        event_types = [event["type"] for event in events]
+        self.assertEqual(event_types[-3:], ["answer", "context_checkpoint", "done"])
+        checkpoint = events[-2]
+        self.assertEqual(checkpoint["context_revision"], 3)
+        self.assertEqual(
+            checkpoint["messages"],
+            [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ],
+        )
+
     def test_reasoning_is_removed_and_sql_rows_are_bounded(self) -> None:
         messages = [
             {"role": "user", "content": "query"},

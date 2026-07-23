@@ -115,11 +115,6 @@ def stream_agent(
         tool_calls = assistant_message.get("tool_calls") or []
 
         if reasoning:
-            yield checkpoint_event(
-                conversation[turn_start_index:],
-                context_revision,
-                summary_update,
-            )
             yield {
                 "type": "reasoning",
                 "iteration": iteration,
@@ -147,6 +142,11 @@ def stream_agent(
                 "type": "answer",
                 "content": answer,
             }
+            yield checkpoint_event(
+                conversation[turn_start_index:],
+                context_revision,
+                summary_update,
+            )
             yield {
                 "type": "done",
                 "sql_calls_count": sql_calls_count,
